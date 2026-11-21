@@ -48,8 +48,8 @@ docker compose version
 ### B. Ambil source code
 
 ```bash
-git clone https://github.com/USERNAME/ai-secretary-threads.git
-cd ai-secretary-threads
+git clone https://github.com/cumayogie/threads-secretary.git
+cd threads-secretary
 ```
 
 Ganti `USERNAME` dan nama repository sesuai GitHub Anda. Untuk repository private, gunakan akses GitHub yang sah (SSH key atau credential manager); jangan menaruh personal access token di URL yang disimpan pada shell history.
