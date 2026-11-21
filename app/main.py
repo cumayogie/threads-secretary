@@ -1,8 +1,7 @@
-import os, sqlite3, secrets, html, json, uuid
+import os, sqlite3, secrets, uuid
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
-from urllib.parse import urlparse
 import httpx, jwt
 from jwt import PyJWKClient
 from fastapi import FastAPI, Depends, HTTPException, Request

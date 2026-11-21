@@ -1,212 +1,210 @@
-# Panduan Instalasi — AI Secretary for Threads
+# Installation Guide — Threads Secretary
 
-Panduan ini untuk **Docker Compose** atau **Coolify** saja. Tidak perlu menjalankan `main.py` secara manual. Seluruh perintah dijalankan dari direktori repository yang berisi `compose.yaml` dan `Dockerfile`.
+Official repository: **https://github.com/cumayogie/threads-secretary**  
+Supported deployment paths: **Coolify (recommended)** or **Docker Compose**. No manual `python main.py` setup required.
 
-> **Penting:** Paket ini adalah rekonstruksi portabel dari aplikasi yang diuji, bukan ekspor identik dari Dockerfile produksi sebelumnya. Uji pada server staging terlebih dahulu. Publikasi Threads **nonaktif secara default** (`THREADS_PUBLISH_ENABLED=false`).
+> This package is a portable reconstruction of the working concept, **not** an exact export of the old Coolify production code. Always use a separate staging domain, test thoroughly, and back up existing data before migrating. Live publishing is disabled by default.
 
-## 1. Prasyarat
+## 1. Before you begin
 
-- Server Linux (contoh Ubuntu 22.04/24.04) dengan Docker Engine dan Docker Compose plugin **atau** instalasi Coolify yang aktif.
-- Domain/subdomain milik sendiri, HTTPS reverse proxy atau Cloudflare Tunnel, dan Cloudflare Zero Trust Access.
-- Meta Developer App dengan akses Threads API untuk akun yang diizinkan; access token yang masih berlaku dengan izin `threads_basic` dan `threads_content_publish`.
-- API key Google Gemini dari Google AI Studio dan nama model yang tersedia di project tersebut.
-- Source code repository ini. **Jangan mengunggah file `.env`, database `.db`, backup, atau access token ke GitHub.**
+You need:
 
-## 2. Siapkan repository GitHub
+1. Ubuntu/Linux server with Docker Engine + Compose **or** an existing Coolify installation.
+2. Domain/subdomain controlled in Cloudflare, plus an HTTPS reverse proxy or Cloudflare Tunnel.
+3. Cloudflare Zero Trust Access application protecting the dashboard hostname, with an Allow policy restricted to your identity.
+4. A Gemini API key and supported Gemini model ID.
+5. A Meta Threads app/token authorized for the Threads account; for publishing, relevant scopes such as `threads_basic` and `threads_content_publish`.
 
-1. Buat repository **Private** di GitHub, misalnya `ai-secretary-threads`.
-2. Upload isi folder paket ini **ke root repository**: `app/`, `Dockerfile`, `compose.yaml`, `requirements.txt`, `.env.example`, `.gitignore`, `README.md`, dan `INSTALLATION.md`.
-3. Pastikan `.env` **tidak** ikut terunggah. File `.env.example` aman diunggah karena hanya berisi placeholder.
-4. Jangan menyimpan kredensial di `compose.yaml`, `Dockerfile`, atau source Python.
+**Important:** The application verifies Cloudflare Access JWT and rejects dashboard requests with the wrong hostname. Do not skip Access setup or expose the application directly. **Keep your old Coolify application running untouched** while preparing staging.
 
-Struktur:
+## 2. Option A — Install in Coolify (recommended)
 
-```text
-ai-secretary-threads/
-├── app/
-│   └── main.py
-├── .env.example
-├── .gitignore
-├── Dockerfile
-├── compose.yaml
-├── requirements.txt
-├── README.md
-└── INSTALLATION.md
+### Step A1 — Create an independent staging app
+
+1. In Coolify, create a **new project/resource → Application**. Do not edit the existing production application.
+2. Select **Public Git Repository** or connected GitHub source.
+3. Repository: `https://github.com/cumayogie/threads-secretary`; branch: `main`.
+4. Build Pack: **Dockerfile**; Dockerfile location: `Dockerfile` (repository root); internal/exposed port: `8000`.
+5. Choose a **new** staging hostname, e.g. `threads-staging.your-domain.com` (replace with a domain you own). Do not reuse `threads.yogieindiarto.com` while production is live.
+
+### Step A2 — Configure secrets (Coolify → Environment Variables)
+
+Copy the **keys**, not placeholder values, from `.env.example`:
+
+```dotenv
+DASHBOARD_HOST=threads-staging.your-domain.com
+CF_ACCESS_TEAM_DOMAIN=your-team.cloudflareaccess.com
+CF_ACCESS_AUD=YOUR_STAGING_ACCESS_APPLICATION_AUD
+GEMINI_API_KEY=YOUR_GEMINI_KEY
+GEMINI_MODEL=gemini-2.5-flash
+THREADS_ACCESS_TOKEN=YOUR_THREADS_TOKEN
+SECRET_API_KEY=GENERATE_WITH_OPENSSL_RAND_HEX_32
+DB_PATH=/app/data/secretary.db
+THREADS_PUBLISH_ENABLED=false
 ```
 
-## 3A. Instalasi dengan Docker Compose
+- `DASHBOARD_HOST` is **hostname only**: no `https://`, port, or path.
+- `CF_ACCESS_AUD` is specific to the **Cloudflare Access application** for the staging hostname. Do not assume the production AUD is correct for staging.
+- Verify `GEMINI_MODEL` is available for your key; example model IDs can change.
+- Generate `SECRET_API_KEY` with `openssl rand -hex 32`; store the result **only in Coolify**, not GitHub.
+- `DB_PATH` must remain `/app/data/secretary.db` inside the container.
+- Keep `THREADS_PUBLISH_ENABLED=false` until you deliberately want to publish real posts.
 
-### A. Pasang Docker
+### Step A3 — Persist SQLite **before first deploy**
 
-Gunakan petunjuk resmi Docker untuk distribusi Linux Anda: https://docs.docker.com/engine/install/ubuntu/ . Pastikan kedua perintah berikut berhasil:
+In Coolify **Persistent Storage**, create a Docker volume mounted at **`/app/data`**. The Docker image runs as UID `1000`; the volume must be writable by that user. A named volume initialized from the image directory typically works, but verify permissions via logs. Do not use ephemeral storage for production drafts.
+
+### Step A4 — Connect domain, TLS, and Access
+
+1. Set the staging domain in Coolify and enable HTTPS using its proxy.
+2. Point Cloudflare DNS to the appropriate Coolify ingress (or configure Cloudflare Tunnel).
+3. In Cloudflare Zero Trust → **Access → Applications**, create a **Self-hosted** application for the **exact staging hostname**. Restrict Allow policy to your identity.
+4. Copy the application's **AUD tag** into `CF_ACCESS_AUD` and the team domain into `CF_ACCESS_TEAM_DOMAIN` in Coolify.
+5. Ensure requests reach the app through the trusted proxy, preserving the original **Host** header. Do not publish container port `8000` directly to the internet.
+6. Save environment changes and **Redeploy** (a simple restart may not apply changed environment variables).
+
+### Step A5 — Verify
+
+1. Open `https://YOUR-STAGING-HOST/health` and confirm `{"status":"ok",...}`. Health is intentionally unauthenticated at the app layer; Cloudflare Access may require login first.
+2. Open `https://YOUR-STAGING-HOST/dashboard`; authenticate with Cloudflare Access.
+3. Create a draft; confirm Gemini returns text. Test **Approve** and **Reject**.
+4. Confirm `THREADS_PUBLISH_ENABLED=false`; do **not** enable posting during initial testing.
+5. Inspect Coolify logs for permission errors, HTTP 401/403, and Gemini errors.
+
+If the dashboard returns **401**, verify Access JWT/AUD/team domain. If it returns **403**, verify `DASHBOARD_HOST`, Host header preservation, and HTTPS Origin.
+
+## 3. Option B — Install with Docker Compose
+
+### Step B1 — Install Docker
+
+Follow the official Docker Engine + Compose installation instructions for Ubuntu: https://docs.docker.com/engine/install/ubuntu/ . Then verify:
 
 ```bash
 docker --version
 docker compose version
 ```
 
-### B. Ambil source code
+### Step B2 — Clone repository and configure `.env`
 
 ```bash
 git clone https://github.com/cumayogie/threads-secretary.git
 cd threads-secretary
-```
-
-Ganti `USERNAME` dan nama repository sesuai GitHub Anda. Untuk repository private, gunakan akses GitHub yang sah (SSH key atau credential manager); jangan menaruh personal access token di URL yang disimpan pada shell history.
-
-### C. Atur konfigurasi
-
-```bash
 cp .env.example .env
 chmod 600 .env
 nano .env
 ```
 
-Isi sesuai lingkungan Anda:
+Fill all variables as described in **Step A2**, using your own staging hostname and Access application AUD. Never upload `.env` to GitHub.
 
-```dotenv
-DASHBOARD_HOST=threads.example.com
-CF_ACCESS_TEAM_DOMAIN=your-team.cloudflareaccess.com
-CF_ACCESS_AUD=REPLACE_WITH_ACCESS_AUD_TAG
-GEMINI_API_KEY=REPLACE_WITH_GEMINI_KEY
-GEMINI_MODEL=gemini-2.5-flash
-THREADS_ACCESS_TOKEN=REPLACE_WITH_THREADS_LONG_LIVED_TOKEN
-SECRET_API_KEY=REPLACE_WITH_LONG_RANDOM_SECRET
-DB_PATH=/app/data/secretary.db
-THREADS_PUBLISH_ENABLED=false
-```
-
-- `DASHBOARD_HOST`: hostname **tanpa** `https://` atau path.
-- `CF_ACCESS_TEAM_DOMAIN`: domain team Cloudflare Access.
-- `CF_ACCESS_AUD`: AUD tag dari aplikasi Cloudflare Access yang melindungi hostname dashboard.
-- `GEMINI_MODEL`: gunakan model ID yang memang tersedia di Google AI Studio; contoh di atas bisa berubah ketersediaannya.
-- `SECRET_API_KEY`: buat nilai acak dengan `openssl rand -hex 32`.
-- `DB_PATH`: biarkan `/app/data/secretary.db` untuk Docker.
-- `THREADS_PUBLISH_ENABLED`: **tetap `false`** sampai Anda benar-benar siap melakukan publikasi nyata.
-
-### D. Build dan jalankan
+### Step B3 — Build, run, and check health
 
 ```bash
+docker compose config --quiet
 docker compose up -d --build
 docker compose ps
 docker compose logs --tail=100 ai-secretary
 ```
 
-Verifikasi health check **dari dalam container**:
+Test from **inside** the container:
 
 ```bash
 docker compose exec ai-secretary python -c 'import urllib.request; print(urllib.request.urlopen("http://127.0.0.1:8000/health", timeout=5).read().decode())'
 ```
 
-**Jaringan:** `compose.yaml` hanya menggunakan `expose: 8000`, bukan `ports`. Artinya aplikasi tidak otomatis tersedia di `http://IP-SERVER:8000`. Hubungkan reverse proxy HTTPS atau Cloudflare Tunnel ke service di jaringan Docker yang sesuai. Jika proxy berada di luar jaringan Compose, Anda harus mengatur konektivitas internal secara aman. **Jangan mengekspos port 8000 langsung ke internet.**
+`compose.yaml` uses `expose: 8000`, **not** `ports`. This is intentional: the container is not directly reachable via `http://SERVER-IP:8000`. Connect a trusted HTTPS reverse proxy or Cloudflare Tunnel to the same Docker network. If your proxy is in another Docker network, explicitly join it to the app's network or use an internal-only proxy route. Configure Cloudflare Access for the staging hostname as in **Step A4**. **Do not** replace `expose` with a public `ports: 8000:8000` mapping.
 
-### E. Domain dan Cloudflare Access
+### Step B4 — Apply changes and operate
 
-1. Siapkan reverse proxy HTTPS atau Cloudflare Tunnel yang meneruskan request untuk `threads.example.com` ke aplikasi port internal `8000`.
-2. Di Cloudflare Zero Trust, buat aplikasi **Access → Applications → Self-hosted** untuk hostname tersebut.
-3. Batasi policy **Allow** hanya untuk email/identitas pribadi Anda.
-4. Masukkan AUD tag dan team domain ke `.env` lalu jalankan `docker compose up -d --force-recreate` jika nilainya berubah.
-5. Buka `https://threads.example.com/dashboard`, login melalui Cloudflare Access.
-6. Coba buat draf, Approve, dan Reject. **Jangan klik Publish untuk tes awal.**
+```bash
+# After editing .env (recreate to apply environment changes):
+docker compose up -d --force-recreate
+# After updating source code:
+git pull --ff-only
+docker compose up -d --build
+# Logs:
+docker compose logs -f ai-secretary
+```
 
-## 3B. Instalasi dengan Coolify
+**Never run `docker compose down -v` unless you intend to delete the database volume.**
 
-1. Login ke Coolify dan buat **Project → Environment → New Resource → Application**.
-2. Pilih sumber **Git Repository** yang berisi file-file di atas. Hubungkan akun GitHub/deploy key jika repository private.
-3. Pilih build pack **Dockerfile**, dengan path `Dockerfile` di root repository. Gunakan port internal **8000**.
-4. Atur domain aplikasi ke `https://threads.example.com` (ganti dengan domain Anda), dan pastikan HTTPS aktif pada reverse proxy.
-5. Tambahkan seluruh variabel dari `.env.example` melalui menu **Environment Variables** di Coolify. **Jangan mengunggah `.env` ke GitHub.**
-6. Tambahkan **Persistent Storage**: Docker volume yang di-mount ke `/app/data`. Lakukan **sebelum deploy pertama** supaya database SQLite tidak hilang saat container diganti.
-7. Pastikan `THREADS_PUBLISH_ENABLED=false`, lalu klik **Deploy**.
-8. Periksa log dan health check `/health`. Sesuaikan DNS Cloudflare dengan IP/proxy atau Tunnel server Coolify.
-9. Di Cloudflare Zero Trust, buat aplikasi Access untuk hostname yang sama; batasi akses ke akun pribadi Anda. Salin AUD tag ke Coolify dan **Redeploy**.
-10. Buka `https://threads.example.com/dashboard`, login, buat draf, lalu uji Approve/Reject.
+## 4. Verify Threads token without publishing
 
-**Catatan keamanan Coolify:** Jangan membiarkan origin dapat diakses bebas dengan Host header palsu. Gunakan Cloudflare Tunnel atau pembatasan firewall/proxy, dan pastikan header identitas dari client tidak dipercaya tanpa validasi JWT. Untuk produksi, audit konfigurasi `--forwarded-allow-ips` pada Dockerfile dan batasi proxy yang dipercaya.
-
-## 4. Verifikasi akun Threads tanpa publikasi
-
-Untuk Docker Compose:
+For Docker Compose:
 
 ```bash
 docker compose exec -T ai-secretary python - <<'PY'
-import os, httpx
+import os
+import httpx
 r = httpx.get(
     'https://graph.threads.net/v1.0/me',
     headers={'Authorization': 'Bearer ' + os.environ['THREADS_ACCESS_TOKEN']},
-    params={'fields': 'id,username'}, timeout=15,
+    params={'fields': 'id,username'},
+    timeout=15,
 )
 print('HTTP:', r.status_code)
-if r.status_code == 200:
-    print('Username:', r.json().get('username'))
-else:
-    print('Review token, permissions and API access')
+print('Username:', r.json().get('username') if r.status_code == 200 else 'unavailable')
 PY
 ```
 
-Untuk Coolify, buka terminal container dan jalankan kode Python yang sama tanpa awalan `docker compose exec -T ai-secretary`.
+For Coolify, open the container terminal and run the equivalent Python statements without the `docker compose exec` wrapper. Do not print or share access tokens. Verify the returned account is the one you intend to use.
 
-Jangan mencetak access token atau menyimpan output yang berisi rahasia ke GitHub Issues.
+## 5. Use the dashboard
 
-## 5. Alur penggunaan
+1. Sign in via Cloudflare Access at `https://YOUR-STAGING-HOST/dashboard`.
+2. Enter a topic; select **Buat Draf dengan Gemini**.
+3. Review the generated draft. Choose **Approve** or **Reject**.
+4. Approved drafts may show a **Publish** button, but the server blocks it while `THREADS_PUBLISH_ENABLED=false`.
+5. To perform a deliberate **live** post: back up data, confirm Threads account and text, set `THREADS_PUBLISH_ENABLED=true`, **redeploy/recreate**, then click Publish **once**. Afterward, consider setting the lock back to `false`.
 
-1. Buka `/dashboard` melalui hostname HTTPS yang sudah dilindungi Cloudflare Access.
-2. Masukkan topik dan klik tombol pembuatan draf. Gemini membuat konten; database menyimpan draf dengan status `pending`.
-3. Tinjau konten. Klik **Approve** atau **Reject**.
-4. Dengan `THREADS_PUBLISH_ENABLED=false`, endpoint Publish menolak pengiriman nyata meskipun tombol mungkin masih muncul di UI.
-5. Jika ingin publikasi nyata, pastikan akun dan konten benar, backup database, lalu secara sengaja ubah `THREADS_PUBLISH_ENABLED=true` dan **recreate/redeploy** aplikasi. Klik Publish **sekali**.
-6. Jika terjadi HTTP 502, timeout, `processing`, atau `needs_review`, **jangan klik Publish lagi**. Periksa akun Threads dan database lebih dahulu karena hasilnya mungkin sudah terbit.
-7. Setelah selesai tes, kembalikan `THREADS_PUBLISH_ENABLED=false` dan recreate/redeploy aplikasi.
+**Publishing uncertainty:** A network timeout or HTTP 502 does **not** prove that the post failed. Inspect Threads and the draft's `publish_state` / `publish_stage`; **never blindly retry**.
 
-**Perintah perubahan environment pada Compose:** sesudah mengedit `.env`, gunakan `docker compose up -d --force-recreate` (sekadar `docker compose restart` tidak menjamin environment baru diterapkan). Pada Coolify, simpan Environment Variables lalu **Redeploy**.
+## 6. Database, backups, and migration
 
-## 6. Operasional dan backup
-
-Perintah Compose:
-
-```bash
-docker compose ps
-docker compose logs -f ai-secretary
-docker compose stop ai-secretary
-docker compose up -d
-docker compose up -d --build
-```
-
-**Jangan jalankan `docker compose down -v`**, karena `-v` dapat menghapus volume database.
-
-Backup SQLite secara konsisten dari container Compose:
+- SQLite lives at `/app/data/secretary.db` on persistent storage.
+- Backup to **separate storage**, not only another file on the same volume.
+- To take a SQLite-consistent backup with Compose:
 
 ```bash
 docker compose exec -T ai-secretary python - <<'PY'
 import sqlite3, datetime
-from pathlib import Path
 src = '/app/data/secretary.db'
 dst = '/app/data/secretary-backup-' + datetime.datetime.now(datetime.timezone.utc).strftime('%Y%m%d-%H%M%S') + '.db'
-with sqlite3.connect(src) as source, sqlite3.connect(dst) as backup:
-    source.backup(backup)
-print('Backup:', dst)
+with sqlite3.connect(src) as original, sqlite3.connect(dst) as backup:
+    original.backup(backup)
+print('Backup created inside container:', dst)
 PY
 ```
 
-Backup di dalam volume tetap perlu **disalin ke penyimpanan terpisah** agar aman jika server atau volumenya hilang. Untuk restore/migrasi, hentikan aplikasi, backup kondisi saat ini, salin database hasil backup ke volume `/app/data`, pastikan owner dapat ditulis UID `1000`, lalu jalankan kembali. Uji migrasi terlebih dahulu pada server staging. **Jangan jalankan dua instance aktif dengan token Threads yang sama jika keduanya dapat memublikasikan.**
+Copy that backup out of the container/volume and store it securely. Before restoring, stop the destination app, make another backup, and ensure file ownership permits UID `1000` to write the database. Test restoration in staging first.
+
+**Migration from your existing Coolify installation:** The source is reconstructed, so confirm schema and functionality before transferring any production DB. Keep publishing locked and avoid two instances posting simultaneously with the same token. A deleted post on Threads is not automatically marked deleted in local SQLite history.
 
 ## 7. Troubleshooting
 
-| Masalah | Pemeriksaan |
+| Symptom | Check |
 | --- | --- |
-| Dashboard 401 | Cloudflare Access JWT, team domain, AUD tag |
-| Dashboard 403 | Hostname `DASHBOARD_HOST` atau Origin tidak sesuai |
-| Publish 403 | Normal jika `THREADS_PUBLISH_ENABLED=false` |
-| Gemini gagal | API key, model ID, kuota, akses jaringan |
-| Threads API gagal | Token, izin, akun target, masa berlaku token |
-| Publish timeout/502 | Jangan retry otomatis; cek Threads dan status database |
-| SQLite permission denied | Persistent volume `/app/data` harus dapat ditulis UID 1000 |
-| Container berjalan tetapi URL tidak terbuka | Reverse proxy, DNS, HTTPS, Cloudflare Access, jaringan Docker |
+| Docker build fails at `COPY app/` | Verify `app/main.py` exists at repository root under `app/` |
+| Container unhealthy | Check `docker compose logs` / Coolify logs; verify `/health` inside container |
+| SQLite `permission denied` | Volume mount `/app/data` and write permission for UID `1000` |
+| Dashboard HTTP 401 | Access JWT, team domain, AUD, proxy forwarding the Access assertion header |
+| Dashboard HTTP 403 | Host header, `DASHBOARD_HOST`, HTTPS Origin |
+| Gemini HTTP 502 | API key, model availability, quota, outbound HTTPS |
+| Publish HTTP 403 | Expected with `THREADS_PUBLISH_ENABLED=false` |
+| Publish HTTP 502 / `needs_review` | Inspect Threads manually; do not retry blindly |
+| Domain unreachable | Cloudflare DNS, TLS, reverse proxy, Docker network, Cloudflare Tunnel |
 
-## 8. Catatan keamanan dan batasan
+## 8. Security and production checklist
 
-- Aplikasi ini **untuk penggunaan pribadi**, bukan layanan multi-tenant publik.
-- Meta App boleh tetap dalam Development Mode selama penggunaan dan akun diizinkan oleh Meta; fitur tertentu mungkin memerlukan izin/review tambahan.
-- Tidak ada fitur token renewal otomatis, content calendar, scheduling, analytics, atau AI reply assistant dalam paket ini.
-- Riwayat `published` di database tidak otomatis berubah jika postingan dihapus manual di Threads.
-- Source code ini belum dinyatakan identik dengan versi produksi lama. Jangan mengganti deployment produksi tanpa backup, review perubahan, dan pengujian staging.
+- [ ] `.env` and credentials absent from GitHub; `.env.example` contains placeholders only.
+- [ ] Staging domain distinct from production.
+- [ ] Cloudflare Access protects the dashboard; Allow policy restricted to your identity.
+- [ ] HTTPS proxy preserves original Host; origin not reachable directly from internet.
+- [ ] No public port 8000 mapping.
+- [ ] Persistent `/app/data` volume created before deployment; backups exported elsewhere.
+- [ ] Gemini test draft and approval/rejection tested.
+- [ ] Threads token verified read-only; publishing remains disabled until intentional.
+- [ ] Real Docker build and health check passed on staging server.
+
+## 9. What is not included
+
+No automated Threads token renewal, scheduled posting, analytics, replies, deleted-post reconciliation, or multi-user roles. Meta app permissions and Gemini model availability can change; validate them in the relevant provider dashboard. This project is designed for private use, not as a publicly open service.

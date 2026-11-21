@@ -1,0 +1,15 @@
+.git
+.github
+.env
+.env.*
+!.env.example
+*.db
+*.db-*
+data
+__pycache__
+*.py[cod]
+.pytest_cache
+.venv
+README.md
+INSTALLATION.md
+tests
